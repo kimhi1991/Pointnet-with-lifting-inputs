@@ -209,4 +209,4 @@ if __name__ == "__main__":
     val = pointnet.test_all()
     print('Test accuracy: %d %%' % val)
 
-
+#by moshe
