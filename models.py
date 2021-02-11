@@ -71,11 +71,13 @@ class Transform(nn.Module):
         return output, matrix3x3, matrix64x64
 
 class PointNet(nn.Module):
-    def __init__(self, train_loader, val_loader, classes=40,sampled_data=False):
+    def __init__(self, train_loader, val_loader, classes=40,lr = 1e-4,alpha = 1e-4,sampled_data=False):
         super(PointNet, self).__init__()
         self.model_name = 'PointNet'
         self.train_loader = train_loader
         self.valid_loader = val_loader
+        self.lr = lr
+        self.alpha = alpha #hyper parameter for the PN loss
         self.best_model = None
         self.sampled_data=sampled_data #if we use a database already sampled points
 
@@ -96,7 +98,7 @@ class PointNet(nn.Module):
         output = self.fc3(xb)
         return self.logsoftmax(output), matrix3x3, matrix64x64
 
-    def pointnetloss(self, predictions, labels, m3x3, m64x64, alpha=0.0001):
+    def pointnetloss(self, predictions, labels, m3x3, m64x64):
         criterion = torch.nn.NLLLoss()
         bs = predictions.size(0)
         id3x3 = torch.eye(3, requires_grad=True).repeat(bs, 1, 1)
@@ -106,10 +108,10 @@ class PointNet(nn.Module):
             id64x64 = id64x64.cuda()
         diff3x3 = id3x3 - torch.bmm(m3x3, m3x3.transpose(1, 2))
         diff64x64 = id64x64 - torch.bmm(m64x64, m64x64.transpose(1, 2))
-        return criterion(predictions, labels) + alpha * (torch.norm(diff3x3) + torch.norm(diff64x64)) / float(bs)
+        return criterion(predictions, labels) + self.alpha * (torch.norm(diff3x3) + torch.norm(diff64x64)) / float(bs)
 
     def train_all(self, epochs=10, with_val=True):
-        optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         best_acc = -1
         for epoch in range(epochs):
             self.train()
@@ -169,15 +171,20 @@ class PointNet(nn.Module):
         return val_acc
 
 class Momentnet(nn.Module):
-    def __init__(self, train_loader, val_loader, classes=40,sampled_data=False):
-        super(PointNet, self).__init__()
+    def __init__(self, train_loader, val_loader, classes=40,lr = 1e-4,alpha = 1e-4,sampled_data=False):
+        super(Momentnet, self).__init__()
         self.model_name = 'PointNet'
         self.train_loader = train_loader
         self.valid_loader = val_loader
+        self.lr = lr
+        self.alpha = alpha #hyper parameter for the PN loss
         self.best_model = None
         self.sampled_data=sampled_data #if we use a database already sampled points
+        self.k = 20
 
         self.transform = Transform()
+        self.conv1 = nn.Conv1d(12, 64, 1) #12 is for second order
+
         self.fc1 = nn.Linear(1024, 512)
         self.fc2 = nn.Linear(512, 256)
         self.fc3 = nn.Linear(256, classes)
@@ -187,8 +194,60 @@ class Momentnet(nn.Module):
         self.dropout = nn.Dropout(p=0.3)
         self.logsoftmax = nn.LogSoftmax(dim=1)
 
+    def concat_moment(self,input, moment=2):
+        """
+        lift input with concatinate to higher moments
+        :param input: tensor shape (btz x n x 3)
+        :param moment: what moment to lift (1/2/3)
+        :return: tensor shape of (btz x n x lifting_size)
+        when lifting_size =3 for first moment, 9 for second moment and 19 for third
+        """
+        if moment == 1:
+            return input
+        else:
+            print(input.shape)
+            a = (input * input).to(device)  # x^2,y^2,z^2
+            b1 = (input[:, :, 0] * input[:, :, 1]).to(device)  # xy
+            b2 = (input[:, :, 0] * input[:, :, 2]).to(device)  # xz
+            b3 = (input[:, :, 1] * input[:, :, 2]).to(device)  # yz
+            b = torch.stack((b1, b2, b3)).T.transpose(0, 1).to(device)
+            second_moment = torch.cat((input.T, a.T, b.T)).T.to(device)
+            if moment == 2:
+                return second_moment
+            a = (input ** 3).to(device)  # x^3 y^3 z^3
+            b1 = (input[:, :, 0] ** 2 * input[:, :, 1]).to(device)  # x^2y
+            b2 = (input[:, :, 0] ** 2 * input[:, :, 2]).to(device)  # x^2z
+            b = torch.stack((b1, b2)).T.transpose(0, 1).to(device)
+            c1 = (input[:, :, 1] ** 2 * input[:, :, 0]).to(device)  # y^2x
+            c2 = (input[:, :, 1] ** 2 * input[:, :, 2]).to(device)  # y^2z
+            c = torch.stack((c1, c2)).T.transpose(0, 1).to(device)
+            d1 = (input[:, :, 2] ** 2 * input[:, :, 0]).to(device)  # z^2x
+            d2 = (input[:, :, 2] ** 2 * input[:, :, 1]).to(device)  # z^2y
+            d = torch.stack((d1, d2)).T.transpose(0, 1).to(device)
+            e = torch.prod(input, 2).to(device)  # xyz
+            third_moment = torch.cat((second_moment.T, a.T, b.T, c.T, d.T, e.unsqueeze(2).T)).T.to(device)
+        return third_moment
+
+    def knn(self, input):
+        inner = -2 * torch.matmul(input.transpose(2, 1), input)
+        xx = torch.sum(input ** 2, dim=1, keepdim=True)
+        pairwise_distance = -xx - inner - xx.transpose(2, 1)
+
+        idx = pairwise_distance.topk(k=self.k, dim=-1)[1]  # (batch_size, num_points, k)
+        return idx
+
     def forward(self, input):
-        xb, matrix3x3, matrix64x64 = self.transform(input)
+
+        #imput size: btz,3,n
+        #create the higher_order layer, here for second moment
+        xb_moment =self.concat_moment(input.transpose(1,2),moment=2) #btz,n,9
+        xb_moment = xb_moment.repeat(self.k,1,1,1).transpose(0,1).transpose(1,2).float()#.to(device) # (btz,n,k,9)
+        xb_knn = self.knn(input) #should be (btz,n,k,3)
+        xb = self.conv1(torch.cat((xb_moment,xb_knn)))
+        #xb = nn.MaxPool1d(xb.size(-1))(xb)
+        xb = F.adaptive_max_pool1d(xb, 1).squeeze()
+        #=======end of aditional=======
+        xb, matrix3x3, matrix64x64 = self.transform(xb)
         xb = F.relu(self.bn1(self.fc1(xb)))
         xb = F.relu(self.bn2(self.dropout(self.fc2(xb))))
         output = self.fc3(xb)

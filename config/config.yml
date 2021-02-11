@@ -1,10 +1,11 @@
 data:
-  num_classes: 10
-  sampled_data: False
+  num_classes: 10 #10 or 40
+  sampled_data: False #true after we use data_script to sample dataset
   sampling_points: 1024
 
 model:
   train_batch: 32
   test_batch: 64
   EPOCHS: 15
-
+  learning_rate: 0.001
+  alpha: 0.001 #for calc loss

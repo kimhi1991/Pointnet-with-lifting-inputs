@@ -20,16 +20,12 @@ def get_path(classes=40,sampled=True):
     if classes == 40:
         return Path("data/ModelNet40"+additianl)
     return Path("data/ModelNet10"+additianl)
-
-
 def default_transforms():
     return transforms.Compose([
                                 PointSampler(1024),
                                 Normalize(),
                                 ToTensor()
                               ])
-
-
 class PointSampler(object):
     def __init__(self, output_size):
         assert isinstance(output_size, int)
@@ -72,8 +68,6 @@ class PointSampler(object):
                                                    verts[sampled_faces[i][2]]))
 
         return sampled_points
-
-
 class Normalize(object):
     def __call__(self, pointcloud):
         assert len(pointcloud.shape) == 2
@@ -82,8 +76,6 @@ class Normalize(object):
         norm_pointcloud /= np.max(np.linalg.norm(norm_pointcloud, axis=1))
 
         return norm_pointcloud
-
-
 class RandRotation_z(object):
     def __call__(self, pointcloud):
         assert len(pointcloud.shape) == 2
@@ -95,8 +87,6 @@ class RandRotation_z(object):
 
         rot_pointcloud = rot_matrix.dot(pointcloud.T).T
         return rot_pointcloud
-
-
 class RandomNoise(object):
     def __call__(self, pointcloud):
         assert len(pointcloud.shape) == 2
@@ -168,7 +158,10 @@ if __name__ == "__main__":
         TRAIN_BATCH  = config['model']['train_batch']
         TEST_BATCH   = config['model']['test_batch']
         EPOCHS       = config['model']['EPOCHS']
+        LR           = config['model']['learning_rate']
+        alpha        = config['model']['alpha']
         SAMPLING_POINTS =config['data']['sampling_points']
+
 
     path = get_path(classes=NUM_CLASSES,sampled=sampled_data)
     folders = [dir for dir in sorted(os.listdir(path)) if os.path.isdir(path / dir)]
@@ -196,8 +189,9 @@ if __name__ == "__main__":
     train_loader = DataLoader(dataset=train_ds, batch_size=TRAIN_BATCH, shuffle=True)
     valid_loader = DataLoader(dataset=valid_ds, batch_size=TEST_BATCH)
 
-
-    pointnet = PointNet(train_loader, valid_loader,classes=NUM_CLASSES,sampled_data=sampled_data).to(device)
+    #pointnet = PointNet(train_loader, valid_loader,classes=NUM_CLASSES,lr = LR,alpha=alpha, sampled_data=sampled_data).to(device)
+    pointnet = Momentnet(train_loader, valid_loader, classes=NUM_CLASSES, lr=LR, alpha=alpha,
+                        sampled_data=sampled_data).to(device)
     print("---TRAINING---")
     pointnet.train_all(epochs=EPOCHS, with_val=True)
     """load best model from a file"""
