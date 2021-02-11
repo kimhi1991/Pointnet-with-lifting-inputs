@@ -3,14 +3,13 @@ import math
 import random
 import os
 from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms, utils
+from torchvision import transforms
 import itertools
-import matplotlib.pyplot as plt
 from path import Path
 from models import *
 import yaml
-import time
-#from utils import *
+
+
 
 
 
@@ -209,4 +208,3 @@ if __name__ == "__main__":
     val = pointnet.test_all()
     print('Test accuracy: %d %%' % val)
 
-#by moshe
