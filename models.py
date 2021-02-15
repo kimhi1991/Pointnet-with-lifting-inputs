@@ -170,20 +170,158 @@ class PointNet(nn.Module):
         val_acc = 100. * correct / total
         return val_acc
 
+#===================MOMEN(E)T CODE=================#
+def concat_moment(input, moment=2):
+    """
+    lift input with concatinate to higher moments
+    :param input: tensor shape (btz x n x 3)
+    :param moment: what moment to lift (1/2/3)
+    :return: tensor shape of (btz x n x lifting_size)
+    when lifting_size =3 for first moment, 9 for second moment and 19 for third
+    """
+    if moment == 1:
+        return input
+    else:
+        #print(input.shape)
+        a = (input * input).to(device)  # x^2,y^2,z^2
+        b1 = (input[:, :, 0] * input[:, :, 1]).to(device)  # xy
+        b2 = (input[:, :, 0] * input[:, :, 2]).to(device)  # xz
+        b3 = (input[:, :, 1] * input[:, :, 2]).to(device)  # yz
+        b = torch.stack((b1, b2, b3)).T.transpose(0, 1).to(device)
+        second_moment = torch.cat((input.T, a.T, b.T)).T.to(device)
+        if moment == 2:
+            return second_moment
+        a = (input ** 3).to(device)  # x^3 y^3 z^3
+        b1 = (input[:, :, 0] ** 2 * input[:, :, 1]).to(device)  # x^2y
+        b2 = (input[:, :, 0] ** 2 * input[:, :, 2]).to(device)  # x^2z
+        b = torch.stack((b1, b2)).T.transpose(0, 1).to(device)
+        c1 = (input[:, :, 1] ** 2 * input[:, :, 0]).to(device)  # y^2x
+        c2 = (input[:, :, 1] ** 2 * input[:, :, 2]).to(device)  # y^2z
+        c = torch.stack((c1, c2)).T.transpose(0, 1).to(device)
+        d1 = (input[:, :, 2] ** 2 * input[:, :, 0]).to(device)  # z^2x
+        d2 = (input[:, :, 2] ** 2 * input[:, :, 1]).to(device)  # z^2y
+        d = torch.stack((d1, d2)).T.transpose(0, 1).to(device)
+        e = torch.prod(input, 2).to(device)  # xyz
+        third_moment = torch.cat((second_moment.T, a.T, b.T, c.T, d.T, e.unsqueeze(2).T)).T.to(device)
+    return third_moment
+
+def knn(x,k):
+    """
+    return the k nn for each point in each batch of input x
+    :param x: tensor of btz x 3 x n
+    :param k: k for knn
+    :return: btz x n x k
+    """
+    inner = -2 * torch.matmul(x.transpose(2, 1), x)
+    xx = torch.sum(x ** 2, dim=1, keepdim=True)
+    pairwise_distance = -xx - inner - xx.transpose(2, 1)
+
+    idx = pairwise_distance.topk(k=k, dim=-1)[1]  # (batch_size, num_points, k)
+    return idx
+
+def get_graph_feature(x, k=20, idx=None):
+    batch_size = x.size(0)
+    num_points = x.size(2)
+    x = x.view(batch_size, -1, num_points)
+    if idx is None:
+        idx = knn(x, k=k)  # (batch_size, num_points, k)
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    idx_base = torch.arange(0, batch_size, device=device).view(-1, 1, 1) * num_points
+
+    idx = idx + idx_base
+
+    idx = idx.view(-1)
+
+    _, num_dims, _ = x.size()
+
+    x = x.transpose(2,
+                    1).contiguous()  # (batch_size, num_points, num_dims)  -> (batch_size*num_points, num_dims) #   batch_size * num_points * k + range(0, batch_size*num_points)
+    feature = x.view(batch_size * num_points, -1)[idx, :]
+    feature = feature.view(batch_size, num_points, k, num_dims)
+    x = x.view(batch_size, num_points, 1, num_dims).repeat(1, 1, k, 1)
+    return feature -x
+    feature = torch.cat((feature - x, x), dim=3).permute(0, 3, 1, 2).contiguous()
+    return feature
+
+class Momentum_Transform(nn.Module):
+    """
+    this class preform as
+    """
+    def __init__(self,momentum_order,k):
+        super().__init__()
+        self.k = k
+        self.momentum_order = momentum_order
+        self.channels_in = 12 if momentum_order==2 else 22 #after concat with the KNN
+
+        self.input_transform = Tnet(k=3)
+        #self.feature_transform = Tnet(k=64)
+
+        self.bn1 = nn.BatchNorm2d(64)
+        self.bn2 = nn.BatchNorm1d(64)
+        self.bn3 = nn.BatchNorm1d(64)
+        self.bn4 = nn.BatchNorm1d(64)
+        self.bn5 = nn.BatchNorm1d(128)
+        self.bn6 = nn.BatchNorm1d(1024)
+
+        self.conv1 = nn.Conv2d(self.channels_in, 64, kernel_size=1) #, bias=False)
+        self.conv2 = nn.Conv1d(64, 64, 1)
+        self.conv3 = nn.Conv1d(64, 64, 1)
+        self.conv4 = nn.Conv1d(64, 64, 1)
+        self.conv5 = nn.Conv1d(64, 128, 1)
+        self.conv6 = nn.Conv1d(128, 1024, 1)
+
+
+    def forward(self, input):
+        #TODO: check if input_transform need 2nd order layer in it
+
+        matrix3x3 = self.input_transform(input) #preform the spatial transformation
+        xb = torch.bmm(input.transpose(1, 2), matrix3x3).transpose(1, 2) #(btz x channels x n)
+        xb_moment = concat_moment(xb.transpose(1,2), moment=self.momentum_order) #btz,n,9/19
+
+        xb_moment = xb_moment.repeat(self.k,1,1,1).transpose(0,1).transpose(1,2).float()#.to(device) # (btz,n,k,9/19)
+        knn_idx = knn(xb, self.k)  # (btz x n x k)
+        xb_knn = get_graph_feature(xb, k=20, idx=knn_idx) # (btz x n x k x 3)
+        xb = torch.cat((xb_moment, xb_knn),dim=3).transpose(1,3) #(btz,n,k,12/22)
+
+        xb = self.bn1(self.conv1(xb)) # should be (btz,n,k,64)
+        # todo: check if leaky relu as activision function in conv1, check if need relu in rest
+        #xb = nn.LeakyReLU(negative_slope=0.2)(xb)
+
+        # todo: check if need nn.MaxPool1d or adaptive_max_pool1d instead
+        #xb = nn.MaxPool1d(xb.size(-1))(xb) #should be (btz,n,64)
+        xb = xb.max(dim=2, keepdim=False)[0] #(btz x 64 x n)
+
+        #leftover from pointnet- to play with
+        #matrix64x64 = self.feature_transform(xb)
+        #xb = torch.bmm(torch.transpose(xb, 1, 2), matrix64x64).transpose(1, 2)
+
+        xb = F.relu(self.bn2(self.conv2(xb)))
+        xb = F.relu(self.bn3(self.conv3(xb)))
+        xb = F.relu(self.bn4(self.conv4(xb)))
+        xb = F.relu(self.bn5(self.conv5(xb)))
+        xb = self.conv6(xb)
+
+        xb = xb.max(dim=-1, keepdim=False)[0]
+        output = nn.Flatten(1)(xb)
+        return output #, matrix3x3, matrix64x64
+
 class Momentnet(nn.Module):
-    def __init__(self, train_loader, val_loader, classes=40,lr = 1e-4,alpha = 1e-4,sampled_data=False):
+    def __init__(self, train_loader, val_loader, classes=40,lr = 1e-4,alpha = 1e-4, momentum_order=2,sampled_data=False):
         super(Momentnet, self).__init__()
-        self.model_name = 'PointNet'
+        self.model_name = 'PointNet_' + str(momentum_order) + '_moment'
+        self.lr = lr
+        self.alpha = alpha #hyper-parameter for the PN loss
+        self.momentum_order = momentum_order #original implementation use 2nd order moment
+        self.loss_function = torch.nn.NLLLoss()
+        #self.loss_function = nn.CrossEntropyLoss(reduction='sum')
+        self.k = 20
+        self.best_model = None
+
         self.train_loader = train_loader
         self.valid_loader = val_loader
-        self.lr = lr
-        self.alpha = alpha #hyper parameter for the PN loss
-        self.best_model = None
-        self.sampled_data=sampled_data #if we use a database already sampled points
-        self.k = 20
-
-        self.transform = Transform()
-        self.conv1 = nn.Conv1d(12, 64, 1) #12 is for second order
+        self.sampled_data = sampled_data  #True when use sampled DB
+        self.Momentum_Transform = Momentum_Transform(momentum_order=momentum_order, k=20)
 
         self.fc1 = nn.Linear(1024, 512)
         self.fc2 = nn.Linear(512, 256)
@@ -194,64 +332,14 @@ class Momentnet(nn.Module):
         self.dropout = nn.Dropout(p=0.3)
         self.logsoftmax = nn.LogSoftmax(dim=1)
 
-    def concat_moment(self,input, moment=2):
-        """
-        lift input with concatinate to higher moments
-        :param input: tensor shape (btz x n x 3)
-        :param moment: what moment to lift (1/2/3)
-        :return: tensor shape of (btz x n x lifting_size)
-        when lifting_size =3 for first moment, 9 for second moment and 19 for third
-        """
-        if moment == 1:
-            return input
-        else:
-            print(input.shape)
-            a = (input * input).to(device)  # x^2,y^2,z^2
-            b1 = (input[:, :, 0] * input[:, :, 1]).to(device)  # xy
-            b2 = (input[:, :, 0] * input[:, :, 2]).to(device)  # xz
-            b3 = (input[:, :, 1] * input[:, :, 2]).to(device)  # yz
-            b = torch.stack((b1, b2, b3)).T.transpose(0, 1).to(device)
-            second_moment = torch.cat((input.T, a.T, b.T)).T.to(device)
-            if moment == 2:
-                return second_moment
-            a = (input ** 3).to(device)  # x^3 y^3 z^3
-            b1 = (input[:, :, 0] ** 2 * input[:, :, 1]).to(device)  # x^2y
-            b2 = (input[:, :, 0] ** 2 * input[:, :, 2]).to(device)  # x^2z
-            b = torch.stack((b1, b2)).T.transpose(0, 1).to(device)
-            c1 = (input[:, :, 1] ** 2 * input[:, :, 0]).to(device)  # y^2x
-            c2 = (input[:, :, 1] ** 2 * input[:, :, 2]).to(device)  # y^2z
-            c = torch.stack((c1, c2)).T.transpose(0, 1).to(device)
-            d1 = (input[:, :, 2] ** 2 * input[:, :, 0]).to(device)  # z^2x
-            d2 = (input[:, :, 2] ** 2 * input[:, :, 1]).to(device)  # z^2y
-            d = torch.stack((d1, d2)).T.transpose(0, 1).to(device)
-            e = torch.prod(input, 2).to(device)  # xyz
-            third_moment = torch.cat((second_moment.T, a.T, b.T, c.T, d.T, e.unsqueeze(2).T)).T.to(device)
-        return third_moment
-
-    def knn(self, input):
-        inner = -2 * torch.matmul(input.transpose(2, 1), input)
-        xx = torch.sum(input ** 2, dim=1, keepdim=True)
-        pairwise_distance = -xx - inner - xx.transpose(2, 1)
-
-        idx = pairwise_distance.topk(k=self.k, dim=-1)[1]  # (batch_size, num_points, k)
-        return idx
 
     def forward(self, input):
-
         #imput size: btz,3,n
-        #create the higher_order layer, here for second moment
-        xb_moment =self.concat_moment(input.transpose(1,2),moment=2) #btz,n,9
-        xb_moment = xb_moment.repeat(self.k,1,1,1).transpose(0,1).transpose(1,2).float()#.to(device) # (btz,n,k,9)
-        xb_knn = self.knn(input) #should be (btz,n,k,3)
-        xb = self.conv1(torch.cat((xb_moment,xb_knn)))
-        #xb = nn.MaxPool1d(xb.size(-1))(xb)
-        xb = F.adaptive_max_pool1d(xb, 1).squeeze()
-        #=======end of aditional=======
-        xb, matrix3x3, matrix64x64 = self.transform(xb)
+        xb = self.Momentum_Transform(input)
         xb = F.relu(self.bn1(self.fc1(xb)))
         xb = F.relu(self.bn2(self.dropout(self.fc2(xb))))
         output = self.fc3(xb)
-        return self.logsoftmax(output), matrix3x3, matrix64x64
+        return self.logsoftmax(output)
 
     def pointnetloss(self, predictions, labels, m3x3, m64x64, alpha=0.0001):
         criterion = torch.nn.NLLLoss()
@@ -276,18 +364,17 @@ class Momentnet(nn.Module):
                 if not self.sampled_data:
                     inputs, labels = data['pointcloud'].to(device).float(), data['category'].to(device)
                     optimizer.zero_grad()
-                    outputs, m3x3, m64x64 = self(inputs.transpose(1, 2))  # forward
+                    outputs = self(inputs.transpose(1, 2))  # forward
                 else:
-                    inputs, labels = data#['pointcloud'].to(device).float(), data['category'].to(device)
+                    inputs, labels = data
                     optimizer.zero_grad()
-                    outputs, m3x3, m64x64 = self(inputs)  # forward
-
+                    outputs = self(inputs)  # forward
 
                 predicted = torch.argmax(outputs,1)
 
                 total += labels.size(0)
                 correct += (labels == predicted).sum().item()
-                loss = self.pointnetloss(outputs, labels, m3x3, m64x64)
+                loss = self.loss_function(outputs, labels)
                 loss.backward()
                 optimizer.step()
 
@@ -314,11 +401,11 @@ class Momentnet(nn.Module):
             for data in self.valid_loader:
                 if not self.sampled_data:
                     inputs, labels = data['pointcloud'].to(device).float(), data['category'].to(device)
-                    outputs, _, _ = self(inputs.transpose(1, 2))  # forward
+                    outputs = self(inputs.transpose(1, 2))  # forward
                     _, predicted = torch.max(outputs.data, 1)
                 else:
                     inputs, labels = data
-                    outputs, _, _ = self(inputs)  # forward
+                    outputs = self(inputs)  # forward
                     predicted = torch.argmax(outputs, 1)
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()

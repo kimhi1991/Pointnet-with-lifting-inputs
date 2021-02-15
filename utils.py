@@ -19,6 +19,19 @@ from models import *
 from typing import Dict, Tuple
 
 
+"""
+    if sampled_data:
+        import utils
+        train_transforms = transforms.Compose([
+            Normalize(),
+            RandomNoise(),
+        ])
+        train_ds = utils.ModelNetDataset(path,train=True,transform=train_transforms)
+        valid_ds = utils.ModelNetDataset(path, train=False, transform=train_transforms)
+
+"""
+
+
 torch_configs = dict(
     dev=torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
     type=torch.float32,

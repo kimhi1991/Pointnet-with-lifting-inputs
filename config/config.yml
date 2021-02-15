@@ -1,6 +1,5 @@
 data:
   num_classes: 10 #10 or 40
-  sampled_data: False #true after we use data_script to sample dataset
   sampling_points: 1024
 
 model:
