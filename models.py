@@ -42,11 +42,14 @@ class Tnet(nn.Module):
         return matrix
 
 class Transform(nn.Module):
-    def __init__(self):
+    def __init__(self,v_normals=False):
         super().__init__()
+        self.v_normals   = v_normals
+        self.in_channels = 6 if v_normals else 3
+
         self.input_transform = Tnet(k=3)
         self.feature_transform = Tnet(k=64)
-        self.conv1 = nn.Conv1d(3, 64, 1)
+        self.conv1 = nn.Conv1d(self.in_channels, 64, 1)
         self.conv2 = nn.Conv1d(64, 128, 1)
         self.conv3 = nn.Conv1d(128, 1024, 1)
 
@@ -55,9 +58,16 @@ class Transform(nn.Module):
         self.bn3 = nn.BatchNorm1d(1024)
 
     def forward(self, input):
-        matrix3x3 = self.input_transform(input)
-        # batch matrix multiplication
-        xb = torch.bmm(torch.transpose(input, 1, 2), matrix3x3).transpose(1, 2)
+        if self.v_normals:
+            xb, norms = torch.split(input, 3, dim=1)
+            matrix3x3 = self.input_transform(xb)
+            xb = torch.bmm(xb.transpose(1, 2), matrix3x3)
+            norms = torch.bmm(norms.transpose(1, 2), matrix3x3)
+            xb = torch.cat((xb,norms),dim=2).transpose(1, 2)
+        else:
+            matrix3x3 = self.input_transform(input)
+            xb = torch.bmm(torch.transpose(input, 1, 2), matrix3x3).transpose(1, 2)
+
 
         xb = F.relu(self.bn1(self.conv1(xb)))
 
@@ -71,17 +81,18 @@ class Transform(nn.Module):
         return output, matrix3x3, matrix64x64
 
 class PointNet(nn.Module):
-    def __init__(self, train_loader, val_loader, classes=40,lr = 1e-4,alpha = 1e-4,sampled_data=False):
+    def __init__(self, train_loader, val_loader, classes=40,lr=1e-4,alpha=1e-4,v_normals=False):
         super(PointNet, self).__init__()
         self.model_name = 'PointNet'
         self.train_loader = train_loader
         self.valid_loader = val_loader
         self.lr = lr
         self.alpha = alpha #hyper parameter for the PN loss
-        self.best_model = None
-        self.sampled_data=sampled_data #if we use a database already sampled points
+        #self.v_normals=v_normals #currently in use only in the Transform network
 
-        self.transform = Transform()
+        self.best_model = None
+
+        self.transform = Transform(v_normals=v_normals)
         self.fc1 = nn.Linear(1024, 512)
         self.fc2 = nn.Linear(512, 256)
         self.fc3 = nn.Linear(256, classes)
@@ -108,7 +119,7 @@ class PointNet(nn.Module):
             id64x64 = id64x64.cuda()
         diff3x3 = id3x3 - torch.bmm(m3x3, m3x3.transpose(1, 2))
         diff64x64 = id64x64 - torch.bmm(m64x64, m64x64.transpose(1, 2))
-        return criterion(predictions, labels) + self.alpha * (torch.norm(diff3x3) + torch.norm(diff64x64)) / float(bs)
+        return criterion(predictions,labels.long()) + self.alpha * (torch.norm(diff3x3) + torch.norm(diff64x64)) / float(bs)
 
     def train_all(self, epochs=10, with_val=True):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
@@ -118,15 +129,9 @@ class PointNet(nn.Module):
             running_loss = 0.0
             total = correct = 0
             for i, data in enumerate(self.train_loader, 0):
-                if not self.sampled_data:
-                    inputs, labels = data['pointcloud'].to(device).float(), data['category'].to(device)
-                    optimizer.zero_grad()
-                    outputs, m3x3, m64x64 = self(inputs.transpose(1, 2))  # forward
-                else:
-                    inputs, labels = data#['pointcloud'].to(device).float(), data['category'].to(device)
-                    optimizer.zero_grad()
-                    outputs, m3x3, m64x64 = self(inputs)  # forward
-
+                inputs, labels = data['data'],data['label']#['pointcloud'].to(device).float(), data['category'].to(device)
+                optimizer.zero_grad()
+                outputs, m3x3, m64x64 = self(inputs.transpose(1, 2))  # forward
 
                 predicted = torch.argmax(outputs,1)
 
@@ -157,14 +162,9 @@ class PointNet(nn.Module):
         correct = total = 0
         with torch.no_grad():
             for data in self.valid_loader:
-                if not self.sampled_data:
-                    inputs, labels = data['pointcloud'].to(device).float(), data['category'].to(device)
-                    outputs, _, _ = self(inputs.transpose(1, 2))  # forward
-                    _, predicted = torch.max(outputs.data, 1)
-                else:
-                    inputs, labels = data
-                    outputs, _, _ = self(inputs)  # forward
-                    predicted = torch.argmax(outputs, 1)
+                inputs, labels = data['data'],data['label']#['pointcloud'].to(device).float(), data['category'].to(device)
+                outputs, _, _ = self(inputs.transpose(1, 2))  # forward
+                _, predicted = torch.max(outputs.data, 1)
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
         val_acc = 100. * correct / total
@@ -248,15 +248,16 @@ class Momentum_Transform(nn.Module):
     """
     this class preform as
     """
-    def __init__(self,momentum_order,k):
+    def __init__(self,moment_order=2,v_normals=False,k=20):
         super().__init__()
         self.k = k
-        self.momentum_order = momentum_order
-        self.channels_in = 12 if momentum_order==2 else 22 #after concat with the KNN
+        self.moment_order = moment_order
+        self.v_normals=v_normals
+        self.channels_in = 12 if moment_order ==2 else 22 #after concat with the KNN
+        if v_normals:
+            self.channels_in += 3
 
         self.input_transform = Tnet(k=3)
-        #self.feature_transform = Tnet(k=64)
-
         self.bn1 = nn.BatchNorm2d(64)
         self.bn2 = nn.BatchNorm1d(64)
         self.bn3 = nn.BatchNorm1d(64)
@@ -273,18 +274,33 @@ class Momentum_Transform(nn.Module):
 
 
     def forward(self, input):
-        #TODO: check if input_transform need 2nd order layer in it
+        #when we use vertex normals
+        if self.v_normals:
+            xb, norms = torch.split(input, 3, dim=1)
+            matrix3x3 = self.input_transform(xb)
+            xb = torch.bmm(xb.transpose(1, 2), matrix3x3).transpose(1, 2)
+            norms = torch.bmm(norms.transpose(1, 2), matrix3x3)
+        else:
+            matrix3x3 = self.input_transform(input)
+            xb = torch.bmm(input.transpose(1, 2), matrix3x3).transpose(1, 2)
 
-        matrix3x3 = self.input_transform(input) #preform the spatial transformation
-        xb = torch.bmm(input.transpose(1, 2), matrix3x3).transpose(1, 2) #(btz x channels x n)
-        xb_moment = concat_moment(xb.transpose(1,2), moment=self.momentum_order) #btz,n,9/19
-
-        xb_moment = xb_moment.repeat(self.k,1,1,1).transpose(0,1).transpose(1,2).float()#.to(device) # (btz,n,k,9/19)
         knn_idx = knn(xb, self.k)  # (btz x n x k)
-        xb_knn = get_graph_feature(xb, k=20, idx=knn_idx) # (btz x n x k x 3)
+        xb_knn = get_graph_feature(xb, k=20, idx=knn_idx)  # (btz x n x k x 3)
+
+
+        #channels size: 9 for 2nd moment and 19 for 3rd moment
+        xb_moment = concat_moment(xb.transpose(1,2), moment=self.moment_order) #btz,n, channels
+
+        # ch + 3 if v_normals (total 12 for 2nd and 22 for 3rd)
+        if self.v_normals:
+            xb_moment = torch.cat((xb_moment, norms), dim=2)
+
+        xb_moment = xb_moment.repeat(self.k,1,1,1).transpose(0,1).transpose(1,2).float()#.to(device) # (btz,n,k,ch)
+
         xb = torch.cat((xb_moment, xb_knn),dim=3).transpose(1,3) #(btz,n,k,12/22)
 
         xb = self.bn1(self.conv1(xb)) # should be (btz,n,k,64)
+
         # todo: check if leaky relu as activision function in conv1, check if need relu in rest
         #xb = nn.LeakyReLU(negative_slope=0.2)(xb)
 
@@ -307,12 +323,13 @@ class Momentum_Transform(nn.Module):
         return output #, matrix3x3, matrix64x64
 
 class Momentnet(nn.Module):
-    def __init__(self, train_loader, val_loader, classes=40,lr = 1e-4,alpha = 1e-4, momentum_order=2,sampled_data=False):
+    def __init__(self, train_loader, val_loader, classes=40,lr = 1e-4, moment_order=2,v_normals=False):
         super(Momentnet, self).__init__()
-        self.model_name = 'PointNet_' + str(momentum_order) + '_moment'
+        self.model_name = 'PointNet_' + str(moment_order) + '_moment'
         self.lr = lr
-        self.alpha = alpha #hyper-parameter for the PN loss
-        self.momentum_order = momentum_order #original implementation use 2nd order moment
+        self.classes = classes
+        #self.moment_order = moment_order #original implementation use 2nd order moment
+        #elf.v_normals=v_normals
         self.loss_function = torch.nn.NLLLoss()
         #self.loss_function = nn.CrossEntropyLoss(reduction='sum')
         self.k = 20
@@ -320,8 +337,7 @@ class Momentnet(nn.Module):
 
         self.train_loader = train_loader
         self.valid_loader = val_loader
-        self.sampled_data = sampled_data  #True when use sampled DB
-        self.Momentum_Transform = Momentum_Transform(momentum_order=momentum_order, k=20)
+        self.Momentum_Transform = Momentum_Transform(moment_order=moment_order,v_normals=v_normals, k=20)
 
         self.fc1 = nn.Linear(1024, 512)
         self.fc2 = nn.Linear(512, 256)
@@ -341,18 +357,6 @@ class Momentnet(nn.Module):
         output = self.fc3(xb)
         return self.logsoftmax(output)
 
-    def pointnetloss(self, predictions, labels, m3x3, m64x64, alpha=0.0001):
-        criterion = torch.nn.NLLLoss()
-        bs = predictions.size(0)
-        id3x3 = torch.eye(3, requires_grad=True).repeat(bs, 1, 1)
-        id64x64 = torch.eye(64, requires_grad=True).repeat(bs, 1, 1)
-        if predictions.is_cuda:
-            id3x3 = id3x3.cuda()
-            id64x64 = id64x64.cuda()
-        diff3x3 = id3x3 - torch.bmm(m3x3, m3x3.transpose(1, 2))
-        diff64x64 = id64x64 - torch.bmm(m64x64, m64x64.transpose(1, 2))
-        return criterion(predictions, labels) + alpha * (torch.norm(diff3x3) + torch.norm(diff64x64)) / float(bs)
-
     def train_all(self, epochs=10, with_val=True):
         optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
         best_acc = -1
@@ -361,20 +365,14 @@ class Momentnet(nn.Module):
             running_loss = 0.0
             total = correct = 0
             for i, data in enumerate(self.train_loader, 0):
-                if not self.sampled_data:
-                    inputs, labels = data['pointcloud'].to(device).float(), data['category'].to(device)
-                    optimizer.zero_grad()
-                    outputs = self(inputs.transpose(1, 2))  # forward
-                else:
-                    inputs, labels = data
-                    optimizer.zero_grad()
-                    outputs = self(inputs)  # forward
-
-                predicted = torch.argmax(outputs,1)
+                inputs, labels = data['data'],data['label']#data['pointcloud'].to(device).float(), data['category'].to(device)
+                optimizer.zero_grad()
+                outputs = self(inputs.transpose(1, 2))  # forward
+                predicted = torch.argmax(outputs, 1)
 
                 total += labels.size(0)
                 correct += (labels == predicted).sum().item()
-                loss = self.loss_function(outputs, labels)
+                loss = self.loss_function(outputs, labels.long())
                 loss.backward()
                 optimizer.step()
 
@@ -392,21 +390,17 @@ class Momentnet(nn.Module):
                     best_acc = val_acc
                     self.best_model = copy.deepcopy(self.state_dict())
                 print('Valid accuracy: %d %%' % val_acc)
-            torch.save(self.best_model, f"best_{self.model_name}_model.pth")
+            torch.save(self.best_model, f"best_{self.model_name}_model_{self.classes}_classes.pth")
 
     def test_all(self):
         self.eval()
         correct = total = 0
         with torch.no_grad():
             for data in self.valid_loader:
-                if not self.sampled_data:
-                    inputs, labels = data['pointcloud'].to(device).float(), data['category'].to(device)
-                    outputs = self(inputs.transpose(1, 2))  # forward
-                    _, predicted = torch.max(outputs.data, 1)
-                else:
-                    inputs, labels = data
-                    outputs = self(inputs)  # forward
-                    predicted = torch.argmax(outputs, 1)
+                inputs, labels = data['data'],data['label']#data['pointcloud'].to(device).float(), data['category'].to(device)
+                outputs = self(inputs.transpose(1, 2))  # forward
+                _, predicted = torch.max(outputs.data, 1)
+
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
         val_acc = 100. * correct / total

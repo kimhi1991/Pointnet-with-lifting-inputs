@@ -1,32 +1,15 @@
 from models import *
-from data_utils import *
+#from utils.data_utils import * # when working with the off dataset
+import utils.provider as utils
 import yaml
-
-
-def transformation(vertex_normals = False):
-    if vertex_normals:
-        train_transforms = transforms.Compose([
-            PointSampler(SAMPLING_POINTS),
-            Normalize(),
-            RandRotation_z(),
-            RandomNoise(),
-            add_vertex_normals(),
-            ToTensor()
-        ])
-    else:
-        train_transforms = transforms.Compose([
-            PointSampler(SAMPLING_POINTS),
-            Normalize(),
-            RandRotation_z(),
-            RandomNoise(),
-            ToTensor()
-        ])
-    return train_transforms
-
+import os
+import torch
+from torch.utils.data import Dataset, DataLoader
+import random
+random.seed = 42
 
 if __name__ == "__main__":
     #parameters and initilizations
-    random.seed = 42
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     with open(os.path.join(os.getcwd(), 'config/config.yml'), 'r') as yml_file:
         config = yaml.load(yml_file)
@@ -39,30 +22,25 @@ if __name__ == "__main__":
         EPOCHS          = config['model']['EPOCHS']
         LR              = config['model']['learning_rate']
         alpha           = config['model']['alpha']
-    vertex_normals = False
+    v_normals = True
 
     #orgenize the dataset and dataloader
-    path = get_path(classes=NUM_CLASSES)
-    folders = [dir for dir in sorted(os.listdir(path)) if os.path.isdir(path / dir)]
-    classes = {folder: i for i, folder in enumerate(folders)}
-    print(f"classes: {classes}")
+    path = 'data\\modelnet40_ply_hdf5_2048'
+    # path=os.path.join('data','ModelNet40-1024')
 
-    train_transforms = transformation(vertex_normals) #if we use the vertex_normals
-    train_ds = PointCloudData(path, transform=train_transforms)
-    valid_ds = PointCloudData(path, valid=True, folder='test')
+    train_ds = utils.PointCloudDataSet(path,numOfPoints = SAMPLING_POINTS ,v_normals=v_normals)
+    valid_ds = utils.PointCloudDataSet(path,numOfPoints = SAMPLING_POINTS, valid=True,v_normals=v_normals)
 
     train_loader = DataLoader(dataset=train_ds, batch_size=TRAIN_BATCH, shuffle=True)
     valid_loader = DataLoader(dataset=valid_ds, batch_size=TEST_BATCH)
 
     #CREATE THE MODELS
-    pointnet = PointNet(train_loader, valid_loader,classes=NUM_CLASSES,lr = LR,alpha=alpha,
-                        sampled_data=sampled_data).to(device)
-    Momenet = Momentnet(train_loader, valid_loader, classes=NUM_CLASSES, lr=LR, alpha=alpha,
-                        momentum_order=2,sampled_data=sampled_data).to(device)
-    Momenet3 = Momentnet(train_loader, valid_loader, classes=NUM_CLASSES, lr=LR, alpha=alpha,
-                        momentum_order=2,sampled_data=sampled_data).to(device)
+    pointnet = PointNet( train_loader, valid_loader, classes=NUM_CLASSES, lr=LR,alpha=alpha, v_normals=v_normals).to(device)
+    Momenet  = Momentnet(train_loader, valid_loader, classes=NUM_CLASSES, lr=LR,moment_order=2, v_normals=v_normals).to(device)
+    Momenet3 = Momentnet(train_loader, valid_loader, classes=NUM_CLASSES, lr=LR,moment_order=3, v_normals=v_normals).to(device)
+
     #networks = [pointnet, Momenet, Momenet3]
-    networks =[Momenet]
+    networks =[Momenet3]
     for model in networks:
         print(f"---TRAINING {model.model_name}---")
         model.train_all(epochs=EPOCHS, with_val=True)

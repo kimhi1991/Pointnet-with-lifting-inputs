@@ -1,5 +1,5 @@
 data:
-  num_classes: 10 #10 or 40
+  num_classes: 40 #10 or 40
   sampling_points: 1024
 
 model:
