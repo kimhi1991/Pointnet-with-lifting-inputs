@@ -2,11 +2,9 @@ import os
 import sys
 import numpy as np
 import h5py
-import zipfile as ZipAPIs
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
-from path import Path
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(BASE_DIR)
@@ -16,7 +14,10 @@ TEST_FILES = 'test_files.txt'
 CLASS_LIST = 'shape_names.txt'
 
 # Download dataset for point cloud classification
-"""DATA_DIR = os.path.join(BASE_DIR, 'data')
+"""
+import zipfile as ZipAPIs
+import torch
+DATA_DIR = os.path.join(BASE_DIR, 'data')
 if not os.path.exists(DATA_DIR):
     os.mkdir(DATA_DIR)
 if not os.path.exists(os.path.join(DATA_DIR, 'modelnet40_ply_hdf5_2048')):
@@ -34,13 +35,14 @@ if not os.path.exists(os.path.join(DATA_DIR, 'modelnet40_ply_hdf5_2048')):
         os.system('rm %s' % (zipfile))
 """
 
+"""from path import Path
+
 def get_path(classes=40,sampled=False):
     additianl = "-1024" if sampled else ""
     if classes == 40:
         return Path("data/ModelNet40"+additianl)
     return Path("data/ModelNet10"+additianl)
-
-
+"""
 #Augmentations
 #TODO: add augmentation
 def default_transforms():

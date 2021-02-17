@@ -6,7 +6,10 @@ import os
 import torch
 from torch.utils.data import Dataset, DataLoader
 import random
+#from torch.utils.tensorboard import SummaryWriter
 random.seed = 42
+
+
 
 if __name__ == "__main__":
     #parameters and initilizations
@@ -22,11 +25,13 @@ if __name__ == "__main__":
         EPOCHS          = config['model']['EPOCHS']
         LR              = config['model']['learning_rate']
         alpha           = config['model']['alpha']
-    v_normals = True
+    v_normals = False
+
+
 
     #orgenize the dataset and dataloader
     path = 'data\\modelnet40_ply_hdf5_2048'
-    # path=os.path.join('data','ModelNet40-1024')
+    # path=os.path.join('data','modelnet40_ply_hdf5_2048')
 
     train_ds = utils.PointCloudDataSet(path,numOfPoints = SAMPLING_POINTS ,v_normals=v_normals)
     valid_ds = utils.PointCloudDataSet(path,numOfPoints = SAMPLING_POINTS, valid=True,v_normals=v_normals)
@@ -35,12 +40,20 @@ if __name__ == "__main__":
     valid_loader = DataLoader(dataset=valid_ds, batch_size=TEST_BATCH)
 
     #CREATE THE MODELS
-    pointnet = PointNet( train_loader, valid_loader, classes=NUM_CLASSES, lr=LR,alpha=alpha, v_normals=v_normals).to(device)
-    Momenet  = Momentnet(train_loader, valid_loader, classes=NUM_CLASSES, lr=LR,moment_order=2, v_normals=v_normals).to(device)
-    Momenet3 = Momentnet(train_loader, valid_loader, classes=NUM_CLASSES, lr=LR,moment_order=3, v_normals=v_normals).to(device)
+    lift_function = lambda x: x
+    #lift_function = lambda x: -2*torch.log(x)
+    #lift_function = lambda x: torch.exp(-0.2*x)
+    lift_func = {'keep_dims': True,'function': lift_function}
 
-    #networks = [pointnet, Momenet, Momenet3]
-    networks =[Momenet3]
+    pointnet = PointNet( train_loader, valid_loader, classes=NUM_CLASSES, lr=LR,alpha=alpha, v_normals=v_normals,lift_func=lift_func).to(device)
+    Momenet  = Momentnet(train_loader, valid_loader, classes=NUM_CLASSES, lr=LR,moment_order=2, v_normals=v_normals,lift_func=lift_func).to(device)
+    Momenet3 = Momentnet(train_loader, valid_loader, classes=NUM_CLASSES, lr=LR,moment_order=3, v_normals=v_normals,lift_func=lift_func).to(device)
+
+    networks = [Momenet, Momenet3]
+    #networks =[Momenet]
+    """now = datetime.now()
+    date_time = now.strftime("%m-%d-%Y_%H-%M-%S")
+    summary_writer = SummaryWriter(os.path.join('config', 'results', date_time))"""
     for model in networks:
         print(f"---TRAINING {model.model_name}---")
         model.train_all(epochs=EPOCHS, with_val=True)
