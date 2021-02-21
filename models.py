@@ -3,7 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import copy
 #from torch.utils.tensorboard import SummaryWriter
-from datetime import datetime
+#from datetime import datetime
+from utils.plotter import *
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -82,7 +83,7 @@ def get_graph_feature(x, k=20, idx=None):
     feature = torch.cat((feature - x, x), dim=3).permute(0, 3, 1, 2).contiguous()
     return feature
 
-NO_LIFT = {'keep_dims': True,'function': lambda x: x}
+NO_LIFT = {'keep_dims': True,'function': lambda x: x,'name': ""}
 
 def lift_with_fuc(input, lift_func=NO_LIFT):
     """
@@ -95,7 +96,7 @@ def lift_with_fuc(input, lift_func=NO_LIFT):
     lift = lift_func['function'](input)
     if lift_func['keep_dims']:
         return lift
-    out = torch.cat((input,lift),dim=2)
+    out = torch.cat((input,lift),dim=1)
     return out
 
 
@@ -167,7 +168,7 @@ class Transform(nn.Module):
             xb = torch.cat((xb,norms),dim=2).transpose(1, 2)
         else:
             matrix3x3 = self.input_transform(input)
-            xb = torch.bmm(input.transpose(1, 2), matrix3x3,device=device).transpose(1, 2)
+            xb = torch.bmm(input.transpose(1, 2), matrix3x3).transpose(1, 2)
         xb = lift_with_fuc(xb,self.lift_func)
         xb = F.relu(self.bn1(self.conv1(xb)))
 
@@ -184,6 +185,9 @@ class PointNet(nn.Module):
     def __init__(self, train_loader, val_loader, classes=40,lr=1e-4,alpha=1e-4,v_normals=False,lift_func=NO_LIFT):
         super(PointNet, self).__init__()
         self.model_name = 'PointNet'
+        if v_normals:
+            self.model_name +='_normals'
+        self.model_name +=lift_func['name']
         self.train_loader = train_loader
         self.valid_loader = val_loader
         self.lr = lr
@@ -248,6 +252,7 @@ class PointNet(nn.Module):
 
                     """summary_writer.add_scalar(f'Train Loss {self.model_name}', running_loss / 10, epoch * len(self.train_loader) + i)
                     summary_writer.add_scalar(f'Train Accuracy {self.model_name}', correct / total,epoch * len(self.train_loader) + i)"""
+                    write_summerize(True, self.model_name, correct/total, epoch, i+1, running_loss/10)
                     print(f'Epoch: {epoch + 1}, Batch: {i + 1}, loss: {running_loss / 10} Train accuracy: {correct/total}')
                     running_loss = 0.0
                     total = correct = 0
@@ -274,8 +279,8 @@ class PointNet(nn.Module):
                 if summary_writer:
                     summary_writer.add_scalar(f'Test Accuracy {self.model_name}', correct / total,  i)
         val_acc = 100. * correct / total
+        write_summerize(False, self.model_name, accuracy=val_acc)
         return val_acc
-
 
 
 #===================MOMEN(E)T CODE=================#
@@ -334,7 +339,7 @@ class Momentum_Transform(nn.Module):
         if self.v_normals:
             xb_moment = torch.cat((xb_moment, norms), dim=2)
 
-        xb_moment = lift_with_fuc(xb_moment, self.lift_func)
+        xb_moment = lift_with_fuc(xb_moment.transpose(1,2), self.lift_func).transpose(1,2)
         xb_moment = xb_moment.repeat(self.k,1,1,1).transpose(0,1).transpose(1,2).float()#.to(device) # (btz,n,k,ch)
         xb = torch.cat((xb_moment, xb_knn),dim=3).transpose(1,3) #(btz,n,k,12/22)
         xb = F.relu(self.bn1(self.conv1(xb))) # should be (btz,n,k,64)
@@ -357,6 +362,9 @@ class Momentnet(nn.Module):
     def __init__(self, train_loader, val_loader, classes=40,lr = 1e-4, moment_order=2,v_normals=False,lift_func=NO_LIFT):
         super(Momentnet, self).__init__()
         self.model_name = 'PointNet_' + str(moment_order) + '_moment'
+        if v_normals:
+            self.model_name +='_normals'
+        self.model_name +=lift_func['name']
         self.lr = lr
         self.classes = classes
         self.loss_function = torch.nn.NLLLoss()
@@ -394,7 +402,8 @@ class Momentnet(nn.Module):
             running_loss = 0.0
             total = correct = 0
             for i, data in enumerate(self.train_loader, 0):
-                inputs, labels = data['data'],data['label']#data['pointcloud'].to(device).float(), data['category'].to(device)
+                inputs, labels = data['data'],data['label']
+                # inputs, labels = data['pointcloud'].to(device).float(), data['category'].to(device)
                 optimizer.zero_grad()
                 outputs = self(inputs.transpose(1, 2))  # forward
                 predicted = torch.argmax(outputs, 1)
@@ -410,6 +419,7 @@ class Momentnet(nn.Module):
                 if i % 10 == 9:
                     """summary_writer.add_scalar(f'Train Loss {self.model_name}', running_loss / 10, epoch * len(self.train_loader) + i)
                     summary_writer.add_scalar(f'Train Accuracy {self.model_name}', correct / total,epoch * len(self.train_loader) + i)"""
+                    write_summerize(True, self.model_name, correct/total, epoch, i+1, running_loss/10)
                     print(f'Epoch: {epoch + 1}, Batch: {i + 1}, loss: {running_loss / 10} Train accuracy: {correct/total}')
                     running_loss = 0.0
                     total = correct = 0
@@ -428,7 +438,8 @@ class Momentnet(nn.Module):
         correct = total = 0
         with torch.no_grad():
             for i,data in enumerate(self.valid_loader):
-                inputs, labels = data['data'],data['label']#data['pointcloud'].to(device).float(), data['category'].to(device)
+                inputs, labels = data['data'],data['label']
+                # inputs, labels = data['pointcloud'].to(device).float(), data['category'].to(device)
                 outputs = self(inputs.transpose(1, 2))  # forward
                 _, predicted = torch.max(outputs.data, 1)
 
@@ -437,4 +448,5 @@ class Momentnet(nn.Module):
                 if summary_writer:
                     summary_writer.add_scalar(f'Test Accuracy {self.model_name}', correct / total,  i)
         val_acc = 100. * correct / total
+        write_summerize(False, self.model_name, accuracy=val_acc)
         return val_acc

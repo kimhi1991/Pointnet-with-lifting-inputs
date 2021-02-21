@@ -44,10 +44,9 @@ def get_path(classes=40,sampled=False):
     return Path("data/ModelNet10"+additianl)
 """
 #Augmentations
-#TODO: add augmentation
+#TODO: add augmentation also to default
 def default_transforms():
     return transforms.Compose([transforms.ToTensor()])
-
 
 
 class PointCloudDataSet(Dataset):
