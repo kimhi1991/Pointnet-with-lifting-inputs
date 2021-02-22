@@ -46,9 +46,9 @@ def get_path(classes=40,sampled=False):
 #Augmentations
 #TODO: add augmentation also to default
 def default_transforms():
-    return transforms.Compose([transforms.ToTensor(),
-                               rotate_point_cloud(),
-                               jitter_point_cloud()])
+    return transforms.Compose([transforms.ToTensor()])
+                               #rotate_point_cloud(),
+                               #jitter_point_cloud()])
 
 
 class PointCloudDataSet(Dataset):

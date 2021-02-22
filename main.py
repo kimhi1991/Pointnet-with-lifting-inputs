@@ -38,7 +38,7 @@ def train():
         LR              = config['model']['learning_rate']
         alpha           =  config['model']['alpha']
 
-    for v_normals in [True,False]:
+    for v_normals in [False,True]:
         #orgenize the dataset and dataloader
         train_ds = dl.PointCloudDataSet(path,numOfPoints = SAMPLING_POINTS ,v_normals=v_normals)
         valid_ds = dl.PointCloudDataSet(path,numOfPoints = SAMPLING_POINTS, valid=True,v_normals=v_normals)
@@ -99,8 +99,9 @@ def validation():
                      {'keep_dims': False, 'function': sin_fun,'name': "_sin_lift"},
                      {'keep_dims': False, 'function': exp_fun,'name': "_exp_lift"}]
         FUNCTIONS = [{'keep_dims': True, 'function': no_fun,'name': ""},
+                     {'keep_dims': False, 'function': log_fun, 'name': "_log_lift"},
                      {'keep_dims': False, 'function': exp_fun,'name': "_exp_lift"}]
-        for lift_func in FUNCTIONS[0:1]:
+        for lift_func in FUNCTIONS[1:]:
             pointnet = PointNet( train_loader, valid_loader, classes=NUM_CLASSES, lr=LR,alpha=alpha, v_normals=v_normals,lift_func=lift_func).to(device)
             Momenet  = Momentnet(train_loader, valid_loader, classes=NUM_CLASSES, lr=LR,moment_order=2, v_normals=v_normals,lift_func=lift_func).to(device)
             Momenet3 = Momentnet(train_loader, valid_loader, classes=NUM_CLASSES, lr=LR,moment_order=3, v_normals=v_normals,lift_func=lift_func).to(device)
@@ -116,7 +117,11 @@ def plot_graphs():
     read_summaries(train=True)
 
 if __name__ == "__main__":
-
+    """
+    WARNING:    please don't run train if you dont want to train the networks
+                if you do, cearfully change parameters in train func to have less runs
+                the defult setup train alot of networks
+    """
     #train()
     validation()
     #plot_graphs()

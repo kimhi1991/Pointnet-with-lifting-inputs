@@ -2,11 +2,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import copy
-#from torch.utils.tensorboard import SummaryWriter
-#from datetime import datetime
 from utils.plotter import *
 from utils.plotter import plot_confusion_matrix
 from sklearn.metrics import confusion_matrix
+#from torch.utils.tensorboard import SummaryWriter
+#from datetime import datetime
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 #===================ARCHITECTURE FUNCTIONS=================#
@@ -99,8 +99,6 @@ def lift_with_fuc(input, lift_func=NO_LIFT):
         return lift
     out = torch.cat((input,lift),dim=1)
     return out
-
-
 
 #===================POINTNET CODE=================#
 
@@ -294,7 +292,6 @@ class PointNet(nn.Module):
                        enumerate([line.rstrip() for line in open((os.path.join(path, 'shape_names.txt')))])}
             plot_confusion_matrix(cm, list(classes.keys()), normalize=True)
         return val_acc
-
 
 #===================MOMEN(E)T CODE=================#
 

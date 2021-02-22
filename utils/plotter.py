@@ -79,14 +79,10 @@ def read_summaries(train=True):
             plt.savefig(path + ' Accuracy graph.png')
             # plt.close(fig_idx)
 
-def plot_confusion_matrix(cm, classes, normalize=False, title='Confusion matrix', cmap=plt.cm.Blues):
+def plot_confusion_matrix(cm, classes, normalize=True, title='Confusion matrix', cmap=plt.cm.Blues):
     if normalize:
         cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-        print("Normalized confusion matrix")
-    else:
-        print('Confusion matrix, without normalization')
-
-    plt.imshow(cm, interpolation='nearest', cmap=cmap)
+    plt.imshow(cm, interpolation='nearest', cmap=cmap,aspect='auto')
     plt.title(title)
     plt.colorbar()
     tick_marks = np.arange(len(classes))
@@ -104,9 +100,7 @@ def plot_confusion_matrix(cm, classes, normalize=False, title='Confusion matrix'
     plt.xlabel('Predicted label')
     #plt.show()
     path = os.path.join('figurs', 'train')
-
     date_time = datetime.now().strftime("%m-%d-%Y_%H-%M-%S")
-
     plt.savefig(path + ' confusion matrix'+date_time+'.png')
 
 
