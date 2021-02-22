@@ -46,7 +46,9 @@ def get_path(classes=40,sampled=False):
 #Augmentations
 #TODO: add augmentation also to default
 def default_transforms():
-    return transforms.Compose([transforms.ToTensor()])
+    return transforms.Compose([transforms.ToTensor(),
+                               rotate_point_cloud(),
+                               jitter_point_cloud()])
 
 
 class PointCloudDataSet(Dataset):
@@ -125,7 +127,6 @@ def rotate_point_cloud_by_angle(batch_data, rotation_angle):
         rotated_data[k, ...] = np.dot(shape_pc.reshape((-1, 3)), rotation_matrix)
     return rotated_data
 
-
 def jitter_point_cloud(batch_data, sigma=0.01, clip=0.05):
     """ Randomly jitter points. jittering is per point.
         Input:
@@ -138,9 +139,6 @@ def jitter_point_cloud(batch_data, sigma=0.01, clip=0.05):
     jittered_data = np.clip(sigma * np.random.randn(B, N, C), -1*clip, clip)
     jittered_data += batch_data
     return jittered_data
-
-
-
 
 def getDataFiles(list_filename):
     return [line.rstrip() for line in open(list_filename)]

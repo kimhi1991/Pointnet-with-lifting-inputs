@@ -5,7 +5,8 @@ import copy
 #from torch.utils.tensorboard import SummaryWriter
 #from datetime import datetime
 from utils.plotter import *
-
+from utils.plotter import plot_confusion_matrix
+from sklearn.metrics import confusion_matrix
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 #===================ARCHITECTURE FUNCTIONS=================#
@@ -266,9 +267,12 @@ class PointNet(nn.Module):
                 print('Valid accuracy: %d %%' % val_acc)
             torch.save(self.best_model, f"best_{self.model_name}_model.pth")
 
-    def test_all(self,summary_writer=None):
+    def test_all(self,summary_writer=None,cm=False):
         self.eval()
         correct = total = 0
+        if cm:
+            all_preds = []
+            all_labels = []
         with torch.no_grad():
             for i,data in enumerate(self.valid_loader):
                 inputs, labels = data['data'],data['label']#['pointcloud'].to(device).float(), data['category'].to(device)
@@ -276,10 +280,19 @@ class PointNet(nn.Module):
                 _, predicted = torch.max(outputs.data, 1)
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
+                if cm:
+                    all_preds += list(predicted.numpy())
+                    all_labels += list(labels.numpy())
                 if summary_writer:
                     summary_writer.add_scalar(f'Test Accuracy {self.model_name}', correct / total,  i)
         val_acc = 100. * correct / total
         write_summerize(False, self.model_name, accuracy=val_acc)
+        if cm:
+            cm = confusion_matrix(all_labels, all_preds)
+            path = os.path.join('data', 'modelnet40_ply_hdf5_2048')
+            classes = {i: class_name for i, class_name in
+                       enumerate([line.rstrip() for line in open((os.path.join(path, 'shape_names.txt')))])}
+            plot_confusion_matrix(cm, list(classes.keys()), normalize=True)
         return val_acc
 
 
@@ -361,7 +374,7 @@ class Momentum_Transform(nn.Module):
 class Momentnet(nn.Module):
     def __init__(self, train_loader, val_loader, classes=40,lr = 1e-4, moment_order=2,v_normals=False,lift_func=NO_LIFT):
         super(Momentnet, self).__init__()
-        self.model_name = 'PointNet_' + str(moment_order) + '_moment'
+        self.model_name = 'Momenet_' + str(moment_order)
         if v_normals:
             self.model_name +='_normals'
         self.model_name +=lift_func['name']
@@ -384,7 +397,6 @@ class Momentnet(nn.Module):
         self.bn2 = nn.BatchNorm1d(256)
         self.dropout = nn.Dropout(p=0.3)
         self.logsoftmax = nn.LogSoftmax(dim=1)
-
 
     def forward(self, input):
         #imput size: btz,3,n
@@ -433,20 +445,31 @@ class Momentnet(nn.Module):
                 print('Valid accuracy: %d %%' % val_acc)
             torch.save(self.best_model, f"best_{self.model_name}_model.pth")
 
-    def test_all(self,summary_writer=None):
+    def test_all(self,summary_writer=None,cm=False):
         self.eval()
         correct = total = 0
+        if cm:
+            all_preds = []
+            all_labels = []
         with torch.no_grad():
             for i,data in enumerate(self.valid_loader):
                 inputs, labels = data['data'],data['label']
                 # inputs, labels = data['pointcloud'].to(device).float(), data['category'].to(device)
                 outputs = self(inputs.transpose(1, 2))  # forward
                 _, predicted = torch.max(outputs.data, 1)
-
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
+                if cm:
+                    all_preds += list(predicted.numpy())
+                    all_labels += list(labels.numpy())
                 if summary_writer:
                     summary_writer.add_scalar(f'Test Accuracy {self.model_name}', correct / total,  i)
         val_acc = 100. * correct / total
         write_summerize(False, self.model_name, accuracy=val_acc)
+        if cm:
+            cm = confusion_matrix(all_labels, all_preds)
+            path = os.path.join('data', 'modelnet40_ply_hdf5_2048')
+            classes = {i: class_name for i, class_name in
+                       enumerate([line.rstrip() for line in open((os.path.join(path, 'shape_names.txt')))])}
+            plot_confusion_matrix(cm, list(classes.keys()), normalize=True)
         return val_acc

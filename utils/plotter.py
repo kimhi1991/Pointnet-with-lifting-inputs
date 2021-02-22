@@ -1,10 +1,20 @@
 import os
+import sys
 import numpy as np
 from matplotlib import pyplot as plt
 import seaborn as sns
 import pandas as pd
-
-
+from datetime import datetime
+import plotly.graph_objects as go
+import plotly.express as px
+import scipy.spatial.distance
+import math
+import random
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+import itertools
+from path import Path
+from typing import Dict, Tuple
 
 #===================DF FUNCT FOR GRAPHS=================#
 
@@ -26,10 +36,10 @@ def write_summerize(train,name, accuracy, epoch=None, batch=None, loss = None):
 
 
 def read_summaries(train=True):
+    colors = ['b', 'r', 'g', 'm', 'c', 'y', 'k', 'tab:orange', 'tab:brown', 'tab:blue']
     if train:
         path = os.path.join('figurs','train')
         fig_idx = 1
-        colors = ['b','r','g','m','c','y','k']
         for i, filename in enumerate(os.listdir(path)):
             color = colors[i]
             df = pd.read_csv(os.path.join(path,filename))
@@ -54,7 +64,6 @@ def read_summaries(train=True):
     else:
         path = os.path.join('figurs', 'test')
         fig_idx = 3
-        colors = ['b', 'r', 'g', 'm', 'c', 'y', 'k']
         for i, filename in enumerate(os.listdir(path)):
             color = colors[i]
             df = pd.read_csv(os.path.join(path, filename))
@@ -69,3 +78,36 @@ def read_summaries(train=True):
             plt.legend()
             plt.savefig(path + ' Accuracy graph.png')
             # plt.close(fig_idx)
+
+def plot_confusion_matrix(cm, classes, normalize=False, title='Confusion matrix', cmap=plt.cm.Blues):
+    if normalize:
+        cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+        print("Normalized confusion matrix")
+    else:
+        print('Confusion matrix, without normalization')
+
+    plt.imshow(cm, interpolation='nearest', cmap=cmap)
+    plt.title(title)
+    plt.colorbar()
+    tick_marks = np.arange(len(classes))
+    plt.xticks(tick_marks, classes, rotation=45)
+    plt.yticks(tick_marks, classes)
+
+    fmt = '.2f' if normalize else 'd'
+    thresh = cm.max() / 2.
+    for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
+        plt.text(j, i, format(cm[i, j], fmt), horizontalalignment="center",
+                 color="white" if cm[i, j] > thresh else "black")
+
+    plt.tight_layout()
+    plt.ylabel('True label')
+    plt.xlabel('Predicted label')
+    #plt.show()
+    path = os.path.join('figurs', 'train')
+
+    date_time = datetime.now().strftime("%m-%d-%Y_%H-%M-%S")
+
+    plt.savefig(path + ' confusion matrix'+date_time+'.png')
+
+
+
