@@ -2,12 +2,28 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import copy
+import numpy as np
 from utils.plotter import *
 from utils.plotter import plot_confusion_matrix
 from sklearn.metrics import confusion_matrix
 #from torch.utils.tensorboard import SummaryWriter
 #from datetime import datetime
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+
+def get_lifting_dict():
+    no_fun = lambda x: x
+    log_fun = lambda x: -2 * torch.log(x)
+    sin_fun = lambda x: torch.sin(x)
+    sinpi_fun = lambda x: torch.sin(np.pi * x)
+    exp_fun = lambda x: torch.exp(-0.2 * x)
+    FUNCTIONS = [{'keep_dims': True, 'function': no_fun, 'name': ""},
+                 {'keep_dims': False, 'function': sin_fun, 'name': "_sin_lift"},
+                 {'keep_dims': False, 'function': exp_fun, 'name': "_exp_lift"},
+                 {'keep_dims': False, 'function': sinpi_fun, 'name': "_sinpi_lift"},
+                 {'keep_dims': False, 'function': log_fun, 'name': "_log_lift"}]
+    return FUNCTIONS
+
 
 #===================ARCHITECTURE FUNCTIONS=================#
 

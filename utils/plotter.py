@@ -41,7 +41,7 @@ def read_summaries(train=True):
         path = os.path.join('figurs','train')
         fig_idx = 1
         for i, filename in enumerate(os.listdir(path)):
-            color = colors[i]
+            color = colors[i%9]
             df = pd.read_csv(os.path.join(path,filename))
             sns.set()
             plt.figure(fig_idx)
@@ -65,7 +65,7 @@ def read_summaries(train=True):
         path = os.path.join('figurs', 'test')
         fig_idx = 3
         for i, filename in enumerate(os.listdir(path)):
-            color = colors[i]
+            color = colors[i%9]
             df = pd.read_csv(os.path.join(path, filename))
             sns.set()
             plt.figure(fig_idx)
