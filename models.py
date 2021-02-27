@@ -9,6 +9,8 @@ from sklearn.metrics import confusion_matrix
 #from torch.utils.tensorboard import SummaryWriter
 #from datetime import datetime
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+from sklearn.metrics import precision_score,recall_score
+
 
 
 def get_lifting_dict():
@@ -24,9 +26,7 @@ def get_lifting_dict():
                  {'keep_dims': False, 'function': log_fun, 'name': "_log_lift"}]
     return FUNCTIONS
 
-
 #===================ARCHITECTURE FUNCTIONS=================#
-
 def concat_moment(input, moment=1):
     """
     lift input with concatinate to higher moments
@@ -307,6 +307,9 @@ class PointNet(nn.Module):
             classes = {i: class_name for i, class_name in
                        enumerate([line.rstrip() for line in open((os.path.join(path, 'shape_names.txt')))])}
             plot_confusion_matrix(cm, list(classes.keys()), normalize=True)
+        precision = precision_score(all_labels, all_preds, average='macro')
+        recall = recall_score(all_labels, all_preds,average='macro')
+        print(f'{self.model_name} F1: {(2*precision * recall)/(precision + recall)}')
         return val_acc
 
 #===================MOMEN(E)T CODE=================#
@@ -485,4 +488,7 @@ class Momentnet(nn.Module):
             classes = {i: class_name for i, class_name in
                        enumerate([line.rstrip() for line in open((os.path.join(path, 'shape_names.txt')))])}
             plot_confusion_matrix(cm, list(classes.keys()), normalize=True)
+        precision = precision_score(all_labels, all_preds,average='macro')
+        recall = recall_score(all_labels, all_preds,average='macro')
+        print(f'{self.model_name} F1: {(2 * precision * recall) / (precision + recall)}')
         return val_acc
